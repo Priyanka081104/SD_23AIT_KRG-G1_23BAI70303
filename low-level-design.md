@@ -154,3 +154,216 @@ CREATE TABLE payment_transactions (
     INDEX idx_gateway (gateway_transaction_id)
 );
 ```
+####2.Class Entitites
+```python
+from enum import Enum
+from datetime import datetime
+from uuid import UUID
+from typing import List, Optional
+
+# Enums
+class UserRole(Enum):
+    CUSTOMER = "customer"
+    RESTAURANT_OWNER = "restaurant_owner"
+    DELIVERY_PARTNER = "delivery_partner"
+    ADMIN = "admin"
+
+class OrderStatus(Enum):
+    PENDING = "pending"
+    CONFIRMED = "confirmed"
+    PREPARING = "preparing"
+    READY_FOR_PICKUP = "ready_for_pickup"
+    PICKED_UP = "picked_up"
+    ON_THE_WAY = "on_the_way"
+    DELIVERED = "delivered"
+    CANCELLED = "cancelled"
+
+class PaymentStatus(Enum):
+    PENDING = "pending"
+    PAID = "paid"
+    FAILED = "failed"
+    REFUNDED = "refunded"
+
+# User Class
+class User:
+    def __init__(self, user_id: UUID, full_name: str, email: str, phone: str, role: UserRole):
+        self.user_id = user_id
+        self.full_name = full_name
+        self.email = email
+        self.phone = phone
+        self.role = role
+        self.is_verified = False
+        self.created_at = datetime.now()
+        self.last_login = None
+    
+    def verify_user(self):
+        self.is_verified = True
+    
+    def update_last_login(self):
+        self.last_login = datetime.now()
+
+# Restaurant Class
+class Restaurant:
+    def __init__(self, restaurant_id: UUID, owner: User, name: str, latitude: float, longitude: float):
+        self.restaurant_id = restaurant_id
+        self.owner = owner
+        self.name = name
+        self.latitude = latitude
+        self.longitude = longitude
+        self.menu_items: List[MenuItem] = []
+        self.is_active = True
+        self.rating = 0.0
+        self.total_ratings = 0
+        self.created_at = datetime.now()
+    
+    def add_menu_item(self, item: 'MenuItem'):
+        self.menu_items.append(item)
+    
+    def update_rating(self, new_rating: int):
+        total_score = self.rating * self.total_ratings + new_rating
+        self.total_ratings += 1
+        self.rating = total_score / self.total_ratings
+    
+    def close_restaurant(self):
+        self.is_active = False
+
+# MenuItem Class
+class MenuItem:
+    def __init__(self, item_id: UUID, name: str, price: float, category: str, is_veg: bool = True):
+        self.item_id = item_id
+        self.name = name
+        self.price = price
+        self.category = category
+        self.is_veg = is_veg
+        self.is_available = True
+        self.discount_percentage = 0.0
+        self.preparation_time_minutes = 15
+    
+    def apply_discount(self, percentage: float):
+        self.discount_percentage = min(percentage, 50.0)  # Max 50% discount
+    
+    def update_availability(self, available: bool):
+        self.is_available = available
+
+# Order Class
+class Order:
+    def __init__(self, order_id: UUID, customer: User, restaurant: Restaurant):
+        self.order_id = order_id
+        self.customer = customer
+        self.restaurant = restaurant
+        self.items: List[OrderItem] = []
+        self.delivery_partner: Optional[User] = None
+        self.order_status = OrderStatus.PENDING
+        self.payment_status = PaymentStatus.PENDING
+        self.subtotal = 0.0
+        self.tax_amount = 0.0
+        self.delivery_fee = 0.0
+        self.discount_amount = 0.0
+        self.total_amount = 0.0
+        self.customer_address = ""
+        self.created_at = datetime.now()
+        self.updated_at = datetime.now()
+    
+    def add_item(self, menu_item: MenuItem, quantity: int):
+        order_item = OrderItem(menu_item, quantity)
+        self.items.append(order_item)
+        self._recalculate_total()
+    
+    def _recalculate_total(self):
+        self.subtotal = sum(item.total_price for item in self.items)
+        self.total_amount = self.subtotal + self.tax_amount + self.delivery_fee - self.discount_amount
+    
+    def update_status(self, new_status: OrderStatus):
+        self.order_status = new_status
+        self.updated_at = datetime.now()
+    
+    def assign_delivery_partner(self, partner: User):
+        self.delivery_partner = partner
+        self.delivery_partner_id = partner.user_id
+    
+    def confirm_payment(self):
+        self.payment_status = PaymentStatus.PAID
+
+# OrderItem Class
+class OrderItem:
+    def __init__(self, menu_item: MenuItem, quantity: int):
+        self.menu_item = menu_item
+        self.quantity = quantity
+        self.unit_price = menu_item.price
+        self.total_price = menu_item.price * quantity
+        self.special_requests = ""
+
+# DeliveryTracking Class
+class DeliveryTracking:
+    def __init__(self, order: Order, delivery_partner: User):
+        self.order = order
+        self.delivery_partner = delivery_partner
+        self.current_latitude = 0.0
+        self.current_longitude = 0.0
+        self.last_updated = datetime.now()
+        self.estimated_delivery_time = None
+    
+    def update_location(self, latitude: float, longitude: float):
+        self.current_latitude = latitude
+        self.current_longitude = longitude
+        self.last_updated = datetime.now()
+    
+    def update_eta(self, eta_minutes: int):
+        from datetime import timedelta
+        self.estimated_delivery_time = datetime.now() + timedelta(minutes=eta_minutes)
+
+# Review Class
+class Review:
+    def __init__(self, review_id: UUID, user: User, restaurant: Restaurant, rating: int, comment: str = ""):
+        self.review_id = review_id
+        self.user = user
+        self.restaurant = restaurant
+        self.rating = rating
+        self.comment = comment
+        self.created_at = datetime.now()
+
+# Service Layer Classes
+class LocationService:
+    @staticmethod
+    def calculate_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+        """Calculate distance in kilometers using Haversine formula"""
+        from math import radians, sin, cos, sqrt, atan2
+        R = 6371  # Earth's radius in km
+        lat1, lon1, lat2, lon2 = map(radians, [lat1, lon1, lat2, lon2])
+        dlat = lat2 - lat1
+        dlon = lon2 - lon1
+        a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
+        c = 2 * atan2(sqrt(a), sqrt(1-a))
+        return R * c
+    
+    def find_nearby_restaurants(self, user_lat: float, user_lon: float, radius_km: float) -> List[Restaurant]:
+        pass  # Implementation would query database with geospatial index
+
+class OrderService:
+    def create_order(self, customer: User, restaurant: Restaurant, items: List[tuple]) -> Order:
+        order = Order(UUID.uuid4(), customer, restaurant)
+        for menu_item, quantity in items:
+            order.add_item(menu_item, quantity)
+        return order
+    
+    def cancel_order(self, order: Order) -> bool:
+        if order.order_status in [OrderStatus.PENDING, OrderStatus.CONFIRMED]:
+            order.update_status(OrderStatus.CANCELLED)
+            return True
+        return False
+    
+    def track_order(self, order_id: UUID) -> DeliveryTracking:
+        pass  # Fetch from delivery_tracking table
+
+class PaymentService:
+    def process_payment(self, order: Order, payment_method: str) -> bool:
+        # Integrate with payment gateway (Razorpay, Stripe, etc.)
+        pass
+    
+    def refund_payment(self, order: Order) -> bool:
+        if order.payment_status == PaymentStatus.PAID:
+            # Process refund
+            order.payment_status = PaymentStatus.REFUNDED
+            return True
+        return False
+```
